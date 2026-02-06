@@ -1,10 +1,10 @@
 <?php
 
+
 namespace SmashBalloon\Reviews\Vendor\PhpDocReader;
 
 /**
- * @author Matthieu Napoli <matthieu@mnapoli.fr>
- * @internal
+ * We stumbled upon an invalid class/property/method annotation.
  */
 class AnnotationException extends \Exception
 {

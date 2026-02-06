@@ -1,11 +1,16 @@
 <?php
+
 /**
- * Reviews Collections PAge
+ * Reviews Collections Page
  *
  * @since 1.0
  */
 
 namespace SmashBalloon\Reviews\Common\Admin;
+
+if (! defined('ABSPATH')) {
+	exit;
+}
 
 use Smashballoon\Customizer\V2\Collections_Builder;
 use SmashBalloon\Reviews\Common\Builder\Config\Proxy;
@@ -15,7 +20,6 @@ use SmashBalloon\Reviews\Common\Util;
 
 class SBR_Collections_Builder extends Collections_Builder
 {
-
 	protected $config_proxy;
 
 	/**
@@ -30,19 +34,24 @@ class SBR_Collections_Builder extends Collections_Builder
 
 	public function __construct(Proxy $config_proxy)
 	{
-		$menu_title = __('Collections', 'reviews-feed') . ( !Util::sbr_is_pro() ? '<span class="sb-men-pro">PRO</span>' : '');
-		$this->menu = [
-			'parent_menu_slug' => "sbr",
-			'page_title' => "Collections",
-			'menu_title' => $menu_title,
-			'menu_slug' => "sbr-collections",
-		];
 		$this->config_proxy = $config_proxy;
 		$this->builder_menu_slug = SBR_CUSTOMIZER_MENU_SLUG;
 		$this->current_plugin = 'ReviewsPro';
 		$this->add_to_menu = !Util::sbr_is_pro() ? true : check_license_valid();
+
+		add_action('init', [$this, 'init_menu']);
 	}
 
+	public function init_menu()
+	{
+		$menu_title = __('Collections', 'reviews-feed') . ( !Util::sbr_is_pro() ? '<span class="sb-men-pro">PRO</span>' : '');
+		$this->menu = [
+			'parent_menu_slug' => "sbr",
+			'page_title'       => "Collections",
+			'menu_title'       => $menu_title,
+			'menu_slug'        => "sbr-collections",
+		];
+	}
 	public function custom_collections_data()
 	{
 
@@ -57,8 +66,9 @@ class SBR_Collections_Builder extends Collections_Builder
 			'collectionsPageUrl' => admin_url('admin.php?page=sbr-collections'),
 			'sourcesList' => SBR_Sources::get_sources_list(),
 			'sourcesCount' => SBR_Sources::get_sources_count(),
-			'builderUrl'           => admin_url( 'admin.php?page=sbr'),
-			'adminHomeURL'           => admin_url( 'admin.php'),
+			'builderUrl'           => admin_url('admin.php?page=sbr'),
+			'adminHomeURL'           => admin_url('admin.php'),
+			'editHomeURL'           => admin_url('edit.php'),
 		];
 		if (Util::sbr_is_pro()) {
 			$FormsManager = new \SmashBalloon\Reviews\Pro\Integrations\Forms\FormsManager();

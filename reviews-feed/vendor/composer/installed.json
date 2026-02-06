@@ -2,17 +2,17 @@
     "packages": [
         {
             "name": "laravel\/serializable-closure",
-            "version": "dev-master",
-            "version_normalized": "dev-master",
+            "version": "1.x-dev",
+            "version_normalized": "1.9999999.9999999.9999999-dev",
             "source": {
                 "type": "git",
                 "url": "https:\/\/github.com\/laravel\/serializable-closure.git",
-                "reference": "d715a63f39ba076acf8be1e4a0901acdcc92228b"
+                "reference": "8be68b9a31863c40ccccac14f7e885e274b8ea62"
             },
             "dist": {
                 "type": "zip",
-                "url": "https:\/\/api.github.com\/repos\/laravel\/serializable-closure\/zipball\/d715a63f39ba076acf8be1e4a0901acdcc92228b",
-                "reference": "d715a63f39ba076acf8be1e4a0901acdcc92228b",
+                "url": "https:\/\/api.github.com\/repos\/laravel\/serializable-closure\/zipball\/8be68b9a31863c40ccccac14f7e885e274b8ea62",
+                "reference": "8be68b9a31863c40ccccac14f7e885e274b8ea62",
                 "shasum": ""
             },
             "require": {
@@ -25,8 +25,7 @@
                 "phpstan\/phpstan": "^1.8.2",
                 "symfony\/var-dumper": "^5.4.11|^6.2.0|^7.0.0"
             },
-            "time": "2024-01-26T17:22:21+00:00",
-            "default-branch": true,
+            "time": "2024-11-19T20:48:19+00:00",
             "type": "library",
             "extra": {
                 "branch-alias": {
@@ -67,27 +66,29 @@
         },
         {
             "name": "php-di\/invoker",
-            "version": "2.0.0",
-            "version_normalized": "2.0.0.0",
+            "version": "2.3.7",
+            "version_normalized": "2.3.7.0",
             "source": {
                 "type": "git",
                 "url": "https:\/\/github.com\/PHP-DI\/Invoker.git",
-                "reference": "540c27c86f663e20fe39a24cd72fa76cdb21d41a"
+                "reference": "3c1ddfdef181431fbc4be83378f6d036d59e81e1"
             },
             "dist": {
                 "type": "zip",
-                "url": "https:\/\/api.github.com\/repos\/PHP-DI\/Invoker\/zipball\/540c27c86f663e20fe39a24cd72fa76cdb21d41a",
-                "reference": "540c27c86f663e20fe39a24cd72fa76cdb21d41a",
+                "url": "https:\/\/api.github.com\/repos\/PHP-DI\/Invoker\/zipball\/3c1ddfdef181431fbc4be83378f6d036d59e81e1",
+                "reference": "3c1ddfdef181431fbc4be83378f6d036d59e81e1",
                 "shasum": ""
             },
             "require": {
-                "psr\/container": "~1.0"
+                "php": ">=7.3",
+                "psr\/container": "^1.0|^2.0"
             },
             "require-dev": {
                 "athletic\/athletic": "~0.1.8",
-                "phpunit\/phpunit": "~4.5"
+                "mnapoli\/hard-mode": "~0.3.0",
+                "phpunit\/phpunit": "^9.0 || ^10 || ^11 || ^12"
             },
-            "time": "2017-03-20T19:28:22+00:00",
+            "time": "2025-08-30T10:22:22+00:00",
             "type": "library",
             "installation-source": "dist",
             "autoload": {
@@ -111,111 +112,39 @@
             ],
             "support": {
                 "issues": "https:\/\/github.com\/PHP-DI\/Invoker\/issues",
-                "source": "https:\/\/github.com\/PHP-DI\/Invoker\/tree\/master"
-            },
-            "install-path": "..\/php-di\/invoker"
-        },
-        {
-            "name": "php-di\/php-di",
-            "version": "6.4.x-dev",
-            "version_normalized": "6.4.9999999.9999999-dev",
-            "source": {
-                "type": "git",
-                "url": "https:\/\/github.com\/PHP-DI\/PHP-DI.git",
-                "reference": "ae0f1b3b03d8b29dff81747063cbfd6276246cc4"
-            },
-            "dist": {
-                "type": "zip",
-                "url": "https:\/\/api.github.com\/repos\/PHP-DI\/PHP-DI\/zipball\/ae0f1b3b03d8b29dff81747063cbfd6276246cc4",
-                "reference": "ae0f1b3b03d8b29dff81747063cbfd6276246cc4",
-                "shasum": ""
-            },
-            "require": {
-                "laravel\/serializable-closure": "^1.0",
-                "php": ">=7.4.0",
-                "php-di\/invoker": "^2.0",
-                "php-di\/phpdoc-reader": "^2.0.1",
-                "psr\/container": "^1.0"
-            },
-            "provide": {
-                "psr\/container-implementation": "^1.0"
-            },
-            "require-dev": {
-                "doctrine\/annotations": "~1.10",
-                "friendsofphp\/php-cs-fixer": "^2.4",
-                "mnapoli\/phpunit-easymock": "^1.2",
-                "ocramius\/proxy-manager": "^2.11.2",
-                "phpstan\/phpstan": "^0.12",
-                "phpunit\/phpunit": "^9.5"
-            },
-            "suggest": {
-                "doctrine\/annotations": "Install it if you want to use annotations (version ~1.2)",
-                "ocramius\/proxy-manager": "Install it if you want to use lazy injection (version ~2.0)"
-            },
-            "time": "2022-04-09T16:46:38+00:00",
-            "type": "library",
-            "installation-source": "dist",
-            "autoload": {
-                "files": [
-                    "src\/functions.php"
-                ],
-                "psr-4": {
-                    "SmashBalloon\\Reviews\\Vendor\\DI\\": "src\/"
-                }
-            },
-            "notification-url": "https:\/\/packagist.org\/downloads\/",
-            "license": [
-                "MIT"
-            ],
-            "description": "The dependency injection container for humans",
-            "homepage": "https:\/\/php-di.org\/",
-            "keywords": [
-                "PSR-11",
-                "container",
-                "container-interop",
-                "dependency injection",
-                "di",
-                "ioc",
-                "psr11"
-            ],
-            "support": {
-                "issues": "https:\/\/github.com\/PHP-DI\/PHP-DI\/issues",
-                "source": "https:\/\/github.com\/PHP-DI\/PHP-DI\/tree\/6.4.0"
+                "source": "https:\/\/github.com\/PHP-DI\/Invoker\/tree\/2.3.7"
             },
             "funding": [
                 {
                     "url": "https:\/\/github.com\/mnapoli",
                     "type": "github"
-                },
-                {
-                    "url": "https:\/\/tidelift.com\/funding\/github\/packagist\/php-di\/php-di",
-                    "type": "tidelift"
                 }
             ],
-            "install-path": "..\/php-di\/php-di"
+            "install-path": "..\/php-di\/invoker"
         },
         {
             "name": "php-di\/phpdoc-reader",
-            "version": "2.1.1",
-            "version_normalized": "2.1.1.0",
+            "version": "2.2.1",
+            "version_normalized": "2.2.1.0",
             "source": {
                 "type": "git",
                 "url": "https:\/\/github.com\/PHP-DI\/PhpDocReader.git",
-                "reference": "15678f7451c020226807f520efb867ad26fbbfcf"
+                "reference": "66daff34cbd2627740ffec9469ffbac9f8c8185c"
             },
             "dist": {
                 "type": "zip",
-                "url": "https:\/\/api.github.com\/repos\/PHP-DI\/PhpDocReader\/zipball\/15678f7451c020226807f520efb867ad26fbbfcf",
-                "reference": "15678f7451c020226807f520efb867ad26fbbfcf",
+                "url": "https:\/\/api.github.com\/repos\/PHP-DI\/PhpDocReader\/zipball\/66daff34cbd2627740ffec9469ffbac9f8c8185c",
+                "reference": "66daff34cbd2627740ffec9469ffbac9f8c8185c",
                 "shasum": ""
             },
             "require": {
-                "php": ">=5.4.0"
+                "php": ">=7.2.0"
             },
             "require-dev": {
-                "phpunit\/phpunit": "~4.6"
+                "mnapoli\/hard-mode": "~0.3.0",
+                "phpunit\/phpunit": "^8.5|^9.0"
             },
-            "time": "2019-09-26T11:24:58+00:00",
+            "time": "2020-10-12T12:39:22+00:00",
             "type": "library",
             "installation-source": "dist",
             "autoload": {
@@ -234,35 +163,30 @@
             ],
             "support": {
                 "issues": "https:\/\/github.com\/PHP-DI\/PhpDocReader\/issues",
-                "source": "https:\/\/github.com\/PHP-DI\/PhpDocReader\/tree\/master"
+                "source": "https:\/\/github.com\/PHP-DI\/PhpDocReader\/tree\/2.2.1"
             },
             "install-path": "..\/php-di\/phpdoc-reader"
         },
         {
             "name": "psr\/container",
-            "version": "1.0.0",
-            "version_normalized": "1.0.0.0",
+            "version": "1.x-dev",
+            "version_normalized": "1.9999999.9999999.9999999-dev",
             "source": {
                 "type": "git",
                 "url": "https:\/\/github.com\/php-fig\/container.git",
-                "reference": "b7ce3b176482dbbc1245ebf52b181af44c2cf55f"
+                "reference": "513e0666f7216c7459170d56df27dfcefe1689ea"
             },
             "dist": {
                 "type": "zip",
-                "url": "https:\/\/api.github.com\/repos\/php-fig\/container\/zipball\/b7ce3b176482dbbc1245ebf52b181af44c2cf55f",
-                "reference": "b7ce3b176482dbbc1245ebf52b181af44c2cf55f",
+                "url": "https:\/\/api.github.com\/repos\/php-fig\/container\/zipball\/513e0666f7216c7459170d56df27dfcefe1689ea",
+                "reference": "513e0666f7216c7459170d56df27dfcefe1689ea",
                 "shasum": ""
             },
             "require": {
-                "php": ">=5.3.0"
+                "php": ">=7.4.0"
             },
-            "time": "2017-02-14T16:28:37+00:00",
+            "time": "2021-11-05T16:50:12+00:00",
             "type": "library",
-            "extra": {
-                "branch-alias": {
-                    "dev-master": "1.0.x-dev"
-                }
-            },
             "installation-source": "dist",
             "autoload": {
                 "psr-4": {
@@ -276,7 +200,7 @@
             "authors": [
                 {
                     "name": "PHP-FIG",
-                    "homepage": "http:\/\/www.php-fig.org\/"
+                    "homepage": "https:\/\/www.php-fig.org\/"
                 }
             ],
             "description": "Common Container Interface (PHP FIG PSR-11)",
@@ -290,7 +214,7 @@
             ],
             "support": {
                 "issues": "https:\/\/github.com\/php-fig\/container\/issues",
-                "source": "https:\/\/github.com\/php-fig\/container\/tree\/master"
+                "source": "https:\/\/github.com\/php-fig\/container\/tree\/1.1.2"
             },
             "install-path": "..\/psr\/container"
         },
@@ -301,13 +225,13 @@
             "source": {
                 "type": "git",
                 "url": "git@github.com:awesomemotive\/sb-customizer.git",
-                "reference": "3d66f82e5a168158a055f083ff8dcbaf353e544d"
+                "reference": "bf4672cfaaad46b1d73efd00efcbaef99006402c"
             },
             "require": {
-                "php-di\/php-di": "^6.1.0",
+                "smashballoon\/framework": "dev-master",
                 "smashballoon\/stubs": "dev-master"
             },
-            "time": "2024-07-24T19:51:18+00:00",
+            "time": "2026-02-02T20:28:23+00:00",
             "type": "library",
             "installation-source": "source",
             "autoload": {
@@ -322,6 +246,70 @@
             ],
             "description": "The SmashBalloon customizer library.",
             "install-path": "..\/smashballoon\/customizer"
+        },
+        {
+            "name": "smashballoon\/framework",
+            "version": "dev-master",
+            "version_normalized": "dev-master",
+            "source": {
+                "type": "git",
+                "url": "git@github.com:awesomemotive\/sb-common.git",
+                "reference": "38fcaff41a0b3cf6a9e6c5db49b9810c0fa0db84"
+            },
+            "dist": {
+                "type": "zip",
+                "url": "https:\/\/api.github.com\/repos\/awesomemotive\/sb-common\/zipball\/38fcaff41a0b3cf6a9e6c5db49b9810c0fa0db84",
+                "reference": "38fcaff41a0b3cf6a9e6c5db49b9810c0fa0db84",
+                "shasum": ""
+            },
+            "require": {
+                "laravel\/serializable-closure": "^1.0",
+                "php": ">=7.4",
+                "php-di\/invoker": "^2.0",
+                "php-di\/phpdoc-reader": "^2.0.1",
+                "psr\/container": "^1.0"
+            },
+            "replace": {
+                "php-di\/php-di": "6.4.0"
+            },
+            "require-dev": {
+                "phpcompatibility\/php-compatibility": "^9.3",
+                "squizlabs\/php_codesniffer": "^3.7"
+            },
+            "time": "2026-01-28T21:12:35+00:00",
+            "default-branch": true,
+            "type": "library",
+            "installation-source": "dist",
+            "autoload": {
+                "psr-4": {
+                    "SmashBalloon\\Reviews\\Vendor\\Smashballoon\\Framework\\": "",
+                    "SmashBalloon\\Reviews\\Vendor\\DI\\": "Packages\/php-di\/src\/"
+                },
+                "files": [
+                    "Utilities\/functions.php",
+                    "Packages\/php-di\/src\/functions.php"
+                ],
+                "exclude-from-classmap": [
+                    "Packages\/Blocks\/blocks\/*"
+                ]
+            },
+            "scripts": {
+                "post-package-install": [
+                    "phpcs --config-set installed_paths vendor\/phpcompatibility\/php-compatibility"
+                ]
+            },
+            "authors": [
+                {
+                    "name": "Smashballoon",
+                    "email": "support@smashballoon.com"
+                }
+            ],
+            "description": "WordPress plugin framework. Developed by SmashBalloon Team.",
+            "support": {
+                "source": "https:\/\/github.com\/awesomemotive\/sb-common\/tree\/master",
+                "issues": "https:\/\/github.com\/awesomemotive\/sb-common\/issues"
+            },
+            "install-path": "..\/smashballoon\/framework"
         },
         {
             "name": "smashballoon\/stubs",
