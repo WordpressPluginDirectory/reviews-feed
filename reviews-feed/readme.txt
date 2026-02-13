@@ -204,6 +204,11 @@ We understand that sometimes you need help, have issues or just have questions. 
 * Encourage visitors to leave their own reviews with a link to Google or Yelp to rate your business.
 
 == Changelog ==
+= 2.4.3 =
+* Tweak: Improved API key handling for all review providers.
+* Tweak: Saved API keys are now used when adding new sources.
+* Tweak: Enhanced API communication reliability.
+
 = 2.4.2 =
 * Tweak: Plugin hardening and miscellaneous fixes.
 
