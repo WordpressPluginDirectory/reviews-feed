@@ -12,6 +12,7 @@ use SmashBalloon\Reviews\Common\Admin\SBR_Plugin_Insltaller;
 use SmashBalloon\Reviews\Common\Admin\SBR_Support_Tool;
 use SmashBalloon\Reviews\Common\Builder\SBR_Feed_Builder;
 use SmashBalloon\Reviews\Common\Builder\SBR_New_Providers_Manager;
+use SmashBalloon\Reviews\Common\Integrations\Analytics\SB_Analytics;
 use SmashBalloon\Reviews\Common\Integrations\Providers\Google;
 use SmashBalloon\Reviews\Common\Integrations\Providers\Yelp;
 use SmashBalloon\Reviews\Common\Services\CLIService;
@@ -19,6 +20,8 @@ use SmashBalloon\Reviews\Common\Services\FeedCacheUpdateService;
 use SmashBalloon\Reviews\Common\Services\SBR_Upgrader;
 use SmashBalloon\Reviews\Common\Services\SettingsManagerService;
 use SmashBalloon\Reviews\Common\Services\ShortcodeService;
+use SmashBalloon\Reviews\Common\Services\MigrationReactivationNotice;
+use SmashBalloon\Reviews\Common\Services\SiteUrlWatcher;
 use SmashBalloon\Reviews\Common\Utils\EmailVerification;
 use Smashballoon\Stubs\Services\ServiceProvider;
 use SmashBalloon\Reviews\Common\Services\Upgrade\RoutineManagerService;
@@ -29,6 +32,7 @@ use SmashBalloon\Reviews\Common\Admin\SBR_About_Builder;
 use SmashBalloon\Reviews\Common\Admin\SBR_Support_Builder;
 use SmashBalloon\Reviews\Common\Tooltip_Wizard;
 use SmashBalloon\Reviews\Common\Admin\Blocks\SB_Reviews_Blocks;
+use SmashBalloon\Reviews\Common\Integrations\Elementor\SBR_Elementor_Base;
 use SmashBalloon\Reviews\Common\ReviewAlerts\SBR_Review_Alert_Service;
 use SmashBalloon\Reviews\Common\ReviewAlerts\SBR_Review_Alert_Frontend;
 use SmashBalloon\Reviews\Common\ReviewAlerts\SBR_ReviewAlert_Builder;
@@ -44,8 +48,17 @@ class ServiceContainer extends ServiceProvider
 		FeedCacheUpdateService::class,
 		SettingsManagerService::class,
 		ShortcodeService::class,
+		// SMASH-1281 — syncs sbr_settings['website_url'] when WP admin
+		// legitimately changes the site URL, preventing the proactive
+		// site-migration guard from spuriously firing on HTTP→HTTPS rollouts
+		// or www/apex swaps.
+		SiteUrlWatcher::class,
+		// SMASH-1281 — renders the dismissible admin notice after a
+		// successful silent license re-activation on a migrated site.
+		MigrationReactivationNotice::class,
 		Google::class,
 		Yelp::class,
+		SB_Analytics::class,
 		CLIService::class,
 		SBR_Feed_Saver_Manager::class,
 		SBR_New_Providers_Manager::class,
@@ -64,6 +77,7 @@ class ServiceContainer extends ServiceProvider
 		SBR_Upgrader::class,
 		SBR_Collections_Builder::class,
 		SBR_Support_Tool::class,
+		SBR_Elementor_Base::class,
 		Error_Reporter::class,
 		// Review Alert Services
 		SBR_Review_Alert_Service::class,

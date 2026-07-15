@@ -79,7 +79,7 @@ class SBR_Feed_Builder extends Feed_Builder {
 
 	public function custom_builder_data()
 	{
-		EmailVerification::catch_email_verification();
+		$verification_result = EmailVerification::catch_email_verification();
 
 		$builder_data = [
 			'nonce' => wp_create_nonce('sbr-admin'),
@@ -106,11 +106,18 @@ class SBR_Feed_Builder extends Feed_Builder {
 			'bulkHistorySources'    => get_option('sbr_bulk_sources', []),
 			'freeRetrieverData'     => Util::get_free_retriever_data(),
 			'emailVerificationURL'    => EmailVerification::build_email_verification_url(admin_url('admin.php?page=sbr')),
-			'isEmailVerified'    => EmailVerification::check_verified()
+			// Try recovery before checking verified status (handles stuck loop case)
+			'isEmailVerified'    => EmailVerification::check_and_recover_verification()
 		];
 
+		// Check if verification was attempted but failed
 		if (!empty($_GET['sbr_email_token']) && !empty($_GET['verified_email'])) {
-			$builder_data['openSourceModal'] = true;
+			if ($verification_result === true) {
+				$builder_data['openSourceModal'] = true;
+			} else {
+				// Verification failed - pass error to frontend
+				$builder_data['emailVerificationError'] = EmailVerification::get_verification_error_message();
+			}
 		}
 
 		if (isset($_GET['manualsource']) && $_GET['manualsource'] == true) {
@@ -218,13 +225,20 @@ class SBR_Feed_Builder extends Feed_Builder {
 				shuffle($posts);
 			}
 
+			// SMASH-1583: backfill empty per-source counts (Facebook recommendations
+			// persist total_rating: 0) on the initial customizer hydration too, so the
+			// preview header is correct on first open — not only after the first edit
+			// triggers the fly-preview AJAX. Same helper, same rule as the front end.
+			$sources_list = SBR_Sources::get_sources_list([
+				'id' => !empty($settings['sources']) && isset($settings['sources']) ? $settings['sources'] : [],
+			]);
+			$sources_list = SBR_Feed_Saver_Manager::backfill_preview_source_counts($sources_list, $feed->get_posts());
+
 			return [
 				'feed_info' => $feed_db_data,
 				'settings' => $settings,
 				'posts' => !empty($posts) ? $posts : [],
-				'sourcesList' => SBR_Sources::get_sources_list([
-					'id' => !empty($settings['sources']) && isset($settings['sources']) ? $settings['sources'] : [],
-				])
+				'sourcesList' => $sources_list
 			];
 		}
 		return [];

@@ -2,8 +2,8 @@
 Contributors: smashballoon, craig-at-smash-balloon, am, smub
 Tags: Google reviews, reviews, testimonials, yelp, Google business
 Requires at least: 4.1
-Tested up to: 6.9
-Stable tag: 2.5.0
+Tested up to: 7.0
+Stable tag: 2.7.0
 Requires PHP: 7.4
 License: GPLv2 or later
 License URI: http://www.gnu.org/licenses/gpl-2.0.html
@@ -204,6 +204,69 @@ We understand that sometimes you need help, have issues or just have questions. 
 * Encourage visitors to leave their own reviews with a link to Google or Yelp to rate your business.
 
 == Changelog ==
+= 2.7.0 =
+* Maintenance: behind-the-scenes improvements and compatibility updates.
+
+= 2.6.8 =
+* Improved: On multilingual sites using WPML, your Google reviews now show up fully translated in every language you offer — not just the first few. Whichever language a visitor is browsing in, they'll see all of your reviews in that language, including when they click "Load More".
+
+= 2.6.7 =
+* Fix: Minor fixes and plugin hardening.
+* Compatibility: Tested and confirmed compatible with WordPress 7.0.
+
+= 2.6.5 =
+* Fix: Feeds that combine more than one source now show the correct total review count and a properly weighted average rating — on your published pages, not just in the Feed Builder preview.
+* Fix: Resolved a rare PHP error that could stop a feed from displaying.
+* Fix: Reviews feeds load faster on Elementor sites — the plugin no longer runs extra background database lookups on every page, which could slow down sites with a lot of feeds.
+* Fix: Fixed feeds dropping to only a few reviews after moving a site to a new domain — the plugin now reconnects to your existing account on the new address instead of getting stuck.
+* Fix: Removing a review source now works properly — deleting one could previously error out, or leave you unable to add a new source even when none was showing in your list.
+* Fix: Clicking Clear All Caches now refreshes your reviews right away, instead of sometimes leaving a feed empty until the next scheduled update.
+* Fix: Pro customers (including legacy All Access Bundle licenses) are no longer mistakenly shown a free-plan review limit — your full set of reviews loads as expected.
+* Fix: Addtional plugin hardening.
+
+= 2.6.4 =
+* Fix: Improved loading performance for the block editor and Reviews Feed dashboard, keeping these screens fast and responsive on sites with large amounts of content.
+* Fix: Corrected a few misspelled labels in several translations.
+
+= 2.6.3 =
+* New: A modern Reviews Feed block for the WordPress block editor, plus a new Elementor widget — pick one of your feeds and drop it onto any page or post visually, no shortcode needed.
+* Fix: Resolved a critical error on PHP 8 sites where an unexpected response from a review source could crash the page instead of being skipped over. Feeds now stay up and quietly ignore malformed review data.
+* Fix: Adding or refreshing Google and Yelp sources is more reliable — when the reviews service is slow to respond, the connection no longer hangs or leaves you with an empty feed.
+
+= 2.6.2 =
+* Fix: Improved reliability on PHP 8 — when a review source can't be reached, the plugin now logs the issue quietly in the background instead of interrupting the feed builder.
+* Tweak: Refreshed the Easy Digital Downloads source icon to match EDD's current branding.
+
+= 2.6.0 =
+* Tweak: Cleaner small-icon notice graphics — admin notification thumbnails now keep their aspect ratio instead of being stretched into a square.
+* Tweak: Notification icons load reliably across the admin area; the small "Reviews Feed" thumbnails that occasionally appeared as broken images now resolve to the correct file.
+
+= 2.5.5 =
+* Fix: Background cron update optimizations — feed processing batches more efficiently, reducing Google Places API requests on sites with multiple feeds.
+* Fix: Connection stability under transient server conditions such as cache events, brief deploys, and high-traffic parallel requests.
+* Fix: Site URL recognition across proxy formats (Cloudflare, AWS, Nginx), www variations, and trailing-dot domain forms for consistent connectivity behind any hosting setup.
+* Tweak: Update external links.
+
+= 2.5.4 =
+* Fix: Resolved a registration loop on multilingual sites (WPML, Polylang) where WordPress's home URL emitted different language paths across requests.
+* Fix: Hardened the registration retry limiter so it correctly stops repeated requests even when the plugin successfully registers in a loop.
+
+= 2.5.3 =
+* Fix: Resolved a loop where sites that switched between http and https (for example after enabling SSL via their host) kept re-registering on every page load.
+* Tweak: Added a safeguard that limits how often the plugin can retry registration when something goes wrong, so it never floods your site or our servers.
+
+= 2.5.2 =
+* Fix: Google reviews from authors with non-Latin names (Japanese, Korean, Arabic, Cyrillic, etc.) no longer disappear.
+* Fix: Source address now shows under the business name for your Google sources.
+* Fix: Total ratings no longer dips during a provider outage — falls back to last good count.
+* Fix: Plugin self-heals on next admin load if settings get corrupted by a backup/migration tool.
+
+= 2.5.1 =
+* Fix: Resolved an issue where email verification could get stuck in a loop if the email was already verified.
+* Fix: Resolved an error that could occur when clicking an expired email verification link.
+* Fix: Email verification now completes successfully even if your session has expired.
+* Tweak: Improved security for the email verification process.
+
 = 2.5.0 =
 * Fix: Resolved PHP 8.1+ deprecation warning when feed settings were not an array.
 * Tweak: Added security fix with rel="noreferrer" on external links.

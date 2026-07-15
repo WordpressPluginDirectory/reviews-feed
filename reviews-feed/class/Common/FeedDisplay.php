@@ -29,6 +29,16 @@ class FeedDisplay {
 		$header_data = is_array($header_data) ? $header_data : [];
 		$posts = $this->feed->get_post_set_page();
 		$feed_id = $this->feed->get_feed_id();
+		// SMASH-1583: enrich the header with real per-source counts pulled from
+		// the FULL cached review set (get_posts(), not the paginated $posts
+		// above) so providers that report no count — Facebook recommendations
+		// being the canonical case — still contribute to the combined total and
+		// the weighted average. No-op for sources that already report a count.
+		// Gate on non-empty header_data so get_posts() isn't evaluated for
+		// single-manual-review feeds where backfill can never have any effect.
+		if (! empty($header_data)) {
+			$header_data = $this->parser->backfill_review_counts($header_data, $this->feed->get_posts());
+		}
 
 		$shortcode_atts = '{}';
 		$settings = $this->feed->get_settings();
@@ -198,18 +208,28 @@ class FeedDisplay {
 	public function star_rating_display($post, $settings)
 	{
 		$star_rating = intval($this->parser->get_rating($post));
-		$return = '';
+		if ($star_rating <= 0) {
+			$aria_label = __('Not rated', 'reviews-feed');
+		} else {
+			$aria_label = sprintf(
+				/* translators: %d: numeric rating out of 5 */
+				__('%d out of 5 stars', 'reviews-feed'),
+				$star_rating
+			);
+		}
+		$return = '<span role="img" aria-label="' . esc_attr($aria_label) . '">';
 		for ($i = 0; $i < 5; $i++) {
 			$iconClass = $star_rating - $i < 1 ? ' sb-item-rating-icon-dimmed' : '';
 			if ($star_rating - $i === 0.5) {
-				$return .= '<span class="sb-item-rating-icon sb-feed-item-icon-half">
+				$return .= '<span class="sb-item-rating-icon sb-feed-item-icon-half" aria-hidden="true">
                     <span class="sb-item-rating-icon sb-item-rating-icon-dimmed">' . DisplayElements::get_star_icon() . '</span>
                     <span class="sb-item-rating-icon-halfdimmed">' . DisplayElements::get_star_icon() . '</span>
                 </span>';
 			} else {
-				$return .= '<span class="sb-item-rating-icon ' . $iconClass . '">' . DisplayElements::get_star_icon() . '</span>';
+				$return .= '<span class="sb-item-rating-icon ' . $iconClass . '" aria-hidden="true">' . DisplayElements::get_star_icon() . '</span>';
 			}
 		}
+		$return .= '</span>';
 
 		return $return;
 	}
@@ -217,19 +237,29 @@ class FeedDisplay {
 	public function overall_star_rating_display($business, $settings)
 	{
 		$star_rating = floatval($this->parser->get_average_rating($business));
-		$return = '';
+		$display_rating = ( floor($star_rating * 2) / 2 );
+		if ($display_rating <= 0) {
+			$aria_label = __('Not rated', 'reviews-feed');
+		} else {
+			$aria_label = sprintf(
+				/* translators: %s: numeric rating out of 5 (may include half-stars) */
+				__('%s out of 5 stars', 'reviews-feed'),
+				$display_rating
+			);
+		}
+		$return = '<span role="img" aria-label="' . esc_attr($aria_label) . '">';
 		for ($i = 0; $i < 5; $i++) {
 			$iconClass = $star_rating - $i < 1 ? ' sb-item-rating-icon-dimmed' : '';
 			if ($star_rating - $i < 1 && $star_rating - $i >= 0.5) {
-				$return .= '<span class="sb-feed-item-icon sb-feed-item-icon-half">
+				$return .= '<span class="sb-feed-item-icon sb-feed-item-icon-half" aria-hidden="true">
                     <span class="sb-feed-header-icon sb-item-rating-icon-dimmed">' . DisplayElements::get_star_icon() . '</span>
                     <span class="sb-item-rating-icon-halfdimmed">' . DisplayElements::get_star_icon() . '</span>
                 </span>';
 			} else {
-				$return .= '<span class="sb-feed-header-icon ' . $iconClass . '">' . DisplayElements::get_star_icon() . '</span>';
+				$return .= '<span class="sb-feed-header-icon ' . $iconClass . '" aria-hidden="true">' . DisplayElements::get_star_icon() . '</span>';
 			}
 		}
-
+		$return .= '</span>';
 
 		return $return;
 	}
@@ -439,5 +469,81 @@ class FeedDisplay {
 	{
 		$the_text = isset($this->translations['reviewsHeader']) && !$this->feed->is_init_wpml() ? $this->translations['reviewsHeader'] : __('Over %s Reviews', 'sb-customizer');
 		return !empty($number) ? str_replace('%s', $number, $the_text) : '';
+	}
+
+	/**
+	 * Booking-only feeds show the hotel's REAL Booking general rating
+	 * (review_score 0-10 + review_score_word, e.g. "9.5 Exceptional") in the
+	 * header instead of the converted 5-star average — so the header speaks the
+	 * same scale as the per-card score badge (rating-extras/booking.php).
+	 *
+	 * Only fires when EVERY source carries a native review_score: a single
+	 * non-Booking source (no native score) falls back to stars, as does older
+	 * Booking data cached before the review_score field existed. Strictly
+	 * additive — existing star feeds are untouched.
+	 *
+	 * @param array $businesses Header data (one entry per source).
+	 * @return array{is_booking_only:bool,score:float,word:string}
+	 */
+	public static function get_booking_header_rating($businesses)
+	{
+		$fallback = array('is_booking_only' => false, 'score' => 0.0, 'word' => '');
+		if (! is_array($businesses) || empty($businesses)) {
+			return $fallback;
+		}
+
+		$scores       = array();
+		$words        = array();
+		$weighted_sum = 0.0;
+		$total_count  = 0;
+		foreach ($businesses as $business) {
+			$info = $business['info'] ?? array();
+			if (is_string($info)) {
+				$decoded = json_decode($info, true);
+				$info = is_array($decoded) ? $decoded : array();
+			}
+			$score = $info['review_score'] ?? null;
+			// One source without a native score disqualifies the whole feed.
+			if (! is_numeric($score) || floatval($score) <= 0) {
+				return $fallback;
+			}
+			$score_f  = floatval($score);
+			$scores[] = $score_f;
+			// Count-weight the native 0-10 score by each hotel's review volume so a
+			// 12k-review hotel dominates a 300-review one — the same count-weighted
+			// logic normal feeds use, but kept on Booking's own 0-10 scale (never
+			// normalized to 5). Booking stores the volume in total_rating; some
+			// payloads use review_count. (SMASH-782 follow-up.)
+			$count = (int) ($info['review_count'] ?? $info['total_rating'] ?? 0);
+			if ($count > 0) {
+				$weighted_sum += $score_f * $count;
+				$total_count  += $count;
+			}
+			$word = isset($info['review_score_word']) ? trim((string) $info['review_score_word']) : '';
+			if ($word !== '') {
+				$words[] = $word;
+			}
+		}
+
+		// $scores is guaranteed non-empty here: $businesses is non-empty and any
+		// source missing a native score returns early above, so every iteration
+		// pushed a score. Prefer the count-weighted mean on the 0-10 scale; fall
+		// back to the unweighted mean only when no source reported a usable count
+		// (a single source, or count-less data, still yields its own score). 1 dp.
+		$score = $total_count > 0
+			? round($weighted_sum / $total_count, 1)
+			: round(array_sum($scores) / count($scores), 1);
+
+		// Word shows only when every source carries the same word (a single
+		// source trivially qualifies) — averaging distinct words would fabricate
+		// a rating Booking never gave. reset() avoids an unchecked [0] offset.
+		$first_word = reset($words);
+		$word = ($first_word !== false
+			&& count($words) === count($scores)
+			&& count(array_unique($words)) === 1)
+			? $first_word
+			: '';
+
+		return array('is_booking_only' => true, 'score' => $score, 'word' => $word);
 	}
 }

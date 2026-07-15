@@ -29,7 +29,10 @@ class SinglePostCache {
 
 	public function __construct($post_data, $media_finder = null, $provider_id = null)
 	{
-		$this->post_data = $post_data;
+		// SMASH-1587: coerce a scalar 'provider' slug into ['name' => ...] before
+		// any $this->post_data['provider']['name'] read in this class (which would
+		// fatal on PHP 8). Shared normalizer in Util — single source of truth.
+		$this->post_data = Util::normalize_review_shape($post_data);
 
 		$upload = wp_upload_dir();
 		$upload_dir = $upload['basedir'];
@@ -104,7 +107,10 @@ class SinglePostCache {
 		foreach ($image_sizes as $image_size) {
 			$i = 0;
 			foreach ($image_source_set as $image_file_to_resize) {
-				if ($i < 10  && $image_file_to_resize['type'] === 'image') {
+				// A scalar element (e.g. a flat URL string in reviews_photos) would
+				// fatal the ['type'] read on PHP 8; a partial array element (no
+				// 'type'/'url') would notice. Guard both (SMASH-1587 + PR #482 Copilot).
+				if ($i < 10  && is_array($image_file_to_resize) && isset($image_file_to_resize['type'], $image_file_to_resize['url']) && $image_file_to_resize['type'] === 'image') {
 					$this_image_file_name = $new_file_name . '-' . $i . '-' .  $image_size . '.jpg';
 
 					$image_editor = wp_get_image_editor($image_file_to_resize['url']);
@@ -324,6 +330,14 @@ class SinglePostCache {
 		$where['post_id'] = $this->post_data['review_id'];
 		$where_format[] = '%s';
 
+		// Scope by language: db_record() (the existence gate that precedes this update)
+		// keys on (post_id, lang, provider_id), but this UPDATE matched post_id alone —
+		// so a single-language update overwrote every sibling-language row for the same
+		// review, collapsing them onto the last-written text. Only 'google' carries a
+		// non-'' lang, so other providers keep lang='' here and are unaffected (SMASH-1631).
+		$where['lang'] = $this->lang;
+		$where_format[] = '%s';
+
 		if ($strict_update) {
 			$where['provider_id'] = $this->get_provider_id();
 			$where_format[] = '%s';
@@ -352,6 +366,12 @@ class SinglePostCache {
 		$where_format = array();
 
 		$where['post_id'] = $this->post_data['review_id'];
+		$where_format[] = '%s';
+		// Scope by language, same reason as update_single(): without it a post_id-only
+		// UPDATE overwrites every sibling-language row for the review. Callers set
+		// $this->lang to the row's own language (or leave the '' default for non-lang
+		// providers), so this targets exactly the intended row (SMASH-1631).
+		$where['lang'] = $this->lang;
 		$where_format[] = '%s';
 		$table_name = esc_sql($wpdb->prefix . self::POSTS_TABLE_NAME);
 		$error      = $wpdb->update($table_name, $data, $where, $format, $where_format);

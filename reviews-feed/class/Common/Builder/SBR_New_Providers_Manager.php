@@ -22,7 +22,9 @@ use SmashBalloon\Reviews\Common\Util;
 use SmashBalloon\Reviews\Pro\Integrations\Providers\AliExpress;
 use SmashBalloon\Reviews\Pro\Integrations\Providers\Airbnb;
 use SmashBalloon\Reviews\Pro\Integrations\Providers\BookingCom;
+use SmashBalloon\Reviews\Pro\Integrations\Providers\EDD;
 use SmashBalloon\Reviews\Pro\Integrations\Providers\WooCommerce;
+use SmashBalloon\Reviews\Pro\Services\BulkUpdate\Bulk_EDD_Reviews_Update;
 use SmashBalloon\Reviews\Pro\Services\BulkUpdate\Bulk_External_Reviews_Update;
 use Smashballoon\Stubs\Services\ServiceProvider;
 
@@ -43,6 +45,14 @@ class SBR_New_Providers_Manager extends ServiceProvider
 		add_action('wp_ajax_sbr_get_woocommerce_tags', [self::class, 'get_woocommerce_tags']);
 		add_action('wp_ajax_sbr_add_woocommerce_source_multi', [self::class, 'add_woocommerce_source_multi']);
 		add_action('wp_ajax_sbr_update_woocommerce_source_multi', [self::class, 'update_woocommerce_source_multi']);
+
+		// EDD AJAX handlers
+		add_action('wp_ajax_sbr_add_edd_source', [self::class, 'add_edd_source']);
+		add_action('wp_ajax_sbr_add_edd_source_multi', [self::class, 'add_edd_source_multi']);
+		add_action('wp_ajax_sbr_update_edd_source_multi', [self::class, 'update_edd_source_multi']);
+		add_action('wp_ajax_sbr_get_edd_downloads', [self::class, 'get_edd_downloads']);
+		add_action('wp_ajax_sbr_get_edd_categories', [self::class, 'get_edd_categories']);
+		add_action('wp_ajax_sbr_get_edd_tags', [self::class, 'get_edd_tags']);
 	}
 
 	/**
@@ -161,7 +171,15 @@ class SBR_New_Providers_Manager extends ServiceProvider
 			return;
 		}
 
-		// Get product
+		// Get product. function_exists guard makes the CI phpstan run (which
+		// loads WP stubs but not WooCommerce stubs) recognize the call as
+		// possibly-undefined, and gives correctness coverage if the WooCommerce
+		// plugin is deactivated between the UI's plugin-required check and the
+		// AJAX call landing here.
+		if (!function_exists('wc_get_product')) {
+			wp_send_json(['error' => 'api_error', 'message' => 'WooCommerce plugin is not active.']);
+			return;
+		}
 		$product = wc_get_product($product_id);
 		if (!$product) {
 			wp_send_json(['error' => 'api_error', 'message' => 'Invalid product. The product may have been deleted or does not exist.']);
@@ -323,6 +341,11 @@ class SBR_New_Providers_Manager extends ServiceProvider
 		$products_info = [];
 		$total_review_count = 0;
 		$weighted_rating_sum = 0;
+
+		if (!function_exists('wc_get_product')) {
+			wp_send_json(['error' => 'api_error', 'message' => 'WooCommerce plugin is not active.']);
+			return;
+		}
 
 		foreach ($product_ids as $product_id) {
 			$product = wc_get_product($product_id);
@@ -580,6 +603,11 @@ class SBR_New_Providers_Manager extends ServiceProvider
 		$total_review_count = 0;
 		$weighted_rating_sum = 0;
 
+		if (!function_exists('wc_get_product')) {
+			wp_send_json(['error' => 'api_error', 'message' => 'WooCommerce plugin is not active.']);
+			return;
+		}
+
 		foreach ($product_ids as $product_id) {
 			$product = wc_get_product($product_id);
 			if (!$product) {
@@ -698,7 +726,7 @@ class SBR_New_Providers_Manager extends ServiceProvider
 			$posts_table = $wpdb->prefix . SBR_POSTS_TABLE;
 
 			// Get comment IDs (reviews) that belong to removed products and this source
-			// phpcs:disable WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+			// phpcs:disable WordPress.DB.PreparedSQL.InterpolatedNotPrepared, WordPress.DB.PreparedSQLPlaceholders.UnfinishedPrepare
 			$product_placeholders = implode(',', array_fill(0, count($removed_product_ids), '%d'));
 			$reviews_to_delete = $wpdb->get_col(
 				$wpdb->prepare(
@@ -721,7 +749,7 @@ class SBR_New_Providers_Manager extends ServiceProvider
 					)
 				);
 			}
-			// phpcs:enable WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+			// phpcs:enable WordPress.DB.PreparedSQL.InterpolatedNotPrepared, WordPress.DB.PreparedSQLPlaceholders.UnfinishedPrepare
 		}
 
 		// Find new products that weren't in the old list
@@ -1207,10 +1235,42 @@ class SBR_New_Providers_Manager extends ServiceProvider
 			// Use SBRelay to fetch normalized data from Relay API
 			$relay = new SBRelay();
 
-			// Fetch reviews from the listing via Relay API
-			// Returns normalized data with 'reviews' and 'info' keys
-			$response = $relay->callProvider('airbnb', [
+			// SMASH-782 Phase 1: call /sources/<provider> BEFORE /reviews/<provider>.
+			// The relay's reviews route is gated by the source-must-exist check
+			// (post-SMASH-1360 quota hardening). Calling reviews first returns
+			// `reviewsSourceNotCreated`.
+			$source_response = $relay->callProvider('airbnb', [
 				'propertyId' => $listing_id
+			], 'source', 'GET');
+
+			// Surface upstream source-call errors so the customer sees the real cause
+			// instead of the downstream `reviewsSourceNotCreated`. See the AliExpress
+			// handler for the response-shape rationale.
+			if (isset($source_response['success']) && $source_response['success'] === false) {
+				// `SBRelay::call()` unwraps the `{success:false, data:{...}}` envelope on
+				// error responses (Integrations/SBRelay.php:357 — returns `$body['data']`
+				// when `$body['data']['id']` is set), so `apiMessage` lands at the TOP
+				// level of `$source_response`. Read the flat key first; the nested form
+				// stays as a defensive fallback for any path that doesn't unwrap.
+				$upstream_msg = $source_response['apiMessage']
+					?? $source_response['data']['apiMessage']
+					?? $source_response['message']
+					?? 'Unable to fetch Airbnb listing info from upstream.';
+				wp_send_json(['error' => 'api_error', 'message' => $upstream_msg]);
+				return;
+			}
+
+			$source_info_from_source = isset($source_response['info']) && is_array($source_response['info'])
+				? $source_response['info']
+				: [];
+
+			// Fetch reviews from the listing via Relay API.
+			// SMASH-782 Phase 1: include `place_id` so the relay's reviews
+			// middleware can find the source row (see AliExpress handler for
+			// the middleware-ordering rationale).
+			$response = $relay->callProvider('airbnb', [
+				'propertyId' => $listing_id,
+				'place_id' => $listing_id
 			], 'reviews', 'GET');
 
 			// Validate response structure - proxy returns { reviews: [], info: {} }
@@ -1223,9 +1283,16 @@ class SBR_New_Providers_Manager extends ServiceProvider
 				return;
 			}
 
-			// Use normalized data from proxy
+			// Prefer source-endpoint info (has richer fields like name/image)
+			// over reviews-endpoint info; fall back to either for any missing key.
 			$normalized_reviews = $response['reviews'];
-			$source_info = $response['info'];
+			$reviews_info = is_array($response['info']) ? $response['info'] : [];
+			// Drop only null / empty-string keys (so missing source fields fall
+			// back to reviews-info), but KEEP legitimate falsy values like 0 or
+			// false (e.g. a genuine 0 rating) instead of stripping them.
+			$source_info = array_filter($source_info_from_source, function ($v) {
+				return $v !== null && $v !== '';
+			}) + $reviews_info;
 			$review_count = count($normalized_reviews);
 
 			$source_data = [
@@ -1323,22 +1390,34 @@ class SBR_New_Providers_Manager extends ServiceProvider
 			}
 
 			try {
-				// Call resolve endpoint to get hotel_id from name/country
+				// Call resolve endpoint to get hotel_id from name/country. Send the
+				// slug too: the relay matches <cc>/<slug> exactly against search
+				// results BEFORE the fuzzy name match, which resolves the precise
+				// hotel even when its display name differs from the slug (names are
+				// not unique). Older relays ignore the extra field.
 				$resolve_response = $relay->callProvider('booking', [
 					'hotel_name' => $url_components['hotel_name'],
 					'country' => $url_components['country'],
+					'slug' => $url_components['slug'] ?? '',
+					'dest_id' => $url_components['dest_id'] ?? '',
+					'dest_type' => $url_components['dest_type'] ?? '',
 				], 'resolve', 'POST');
 
 				// Check if resolution was successful
 				if (isset($resolve_response['hotel_id'])) {
 					$hotel_id = $resolve_response['hotel_id'];
 				} else {
-					$error_msg = 'Could not find hotel. ';
-					if (isset($resolve_response['message'])) {
-						$error_msg .= $resolve_response['message'];
-					} else {
-						$error_msg .= 'Please provide the numeric hotel_id directly.';
-					}
+					// A generic upstream message ("Something went wrong!" / empty) reads as a
+					// dev dead end; give the customer an actionable next step instead of
+					// surfacing it verbatim. Only append the relay message when it's specific.
+					$relay_msg = isset($resolve_response['message']) ? trim((string) $resolve_response['message']) : '';
+					$generic   = ['', 'something went wrong', 'something went wrong!', 'error', 'unknown error', 'failed'];
+					$actionable = "We couldn't match this link to a specific Booking.com hotel. "
+						. "Two options that always work: open the hotel on Booking.com and copy the URL after clicking it from the search results (that link carries the hotel ID), "
+						. "or paste the numeric hotel ID directly into this field.";
+					$error_msg = in_array(strtolower($relay_msg), $generic, true)
+						? $actionable
+						: 'Could not find hotel. ' . $relay_msg . ' ' . $actionable;
 					wp_send_json(['error' => 'api_error', 'message' => $error_msg]);
 					return;
 				}
@@ -1362,10 +1441,55 @@ class SBR_New_Providers_Manager extends ServiceProvider
 		}
 
 		try {
-			// Fetch hotel info and reviews via Relay API (GET request)
-			// Returns normalized data with 'reviews' and 'info' keys
+			// SMASH-782 Phase 1: call /sources/<provider> BEFORE /reviews/<provider>.
+			// The relay's reviews route is gated by the source-must-exist check
+			// (post-SMASH-1360 quota hardening). Calling reviews first returns
+			// `reviewsSourceNotCreated`.
+			$source_response = $relay->callProvider('booking', [
+				'hotel_id' => $hotel_id,
+				'locale' => 'en-gb',
+			], 'source', 'GET');
+
+			// Surface upstream source-call errors so the customer sees the real cause
+			// instead of the downstream `reviewsSourceNotCreated`. See the AliExpress
+			// handler for the response-shape rationale.
+			if (isset($source_response['success']) && $source_response['success'] === false) {
+				// See airbnb handler comment — `SBRelay::call()` unwraps the data
+				// envelope on error, so `apiMessage` is at the top level.
+				$upstream_msg = $source_response['apiMessage']
+					?? $source_response['data']['apiMessage']
+					?? $source_response['message']
+					?? 'Unable to fetch Booking.com hotel info from upstream.';
+				wp_send_json(['error' => 'api_error', 'message' => $upstream_msg]);
+				return;
+			}
+
+			$source_info_from_source = isset($source_response['info']) && is_array($source_response['info'])
+				? $source_response['info']
+				: [];
+
+			// SMASH-782 — exact-match guard (fail closed). When the user supplied a
+			// hotel-page URL, the hotel we just fetched MUST be that exact hotel:
+			// its canonical Booking.com slug has to equal the URL's slug. This is
+			// the single guarantee that a wrong/fuzzy id can never import a
+			// different hotel's reviews. The decision (numeric-ID input skips it,
+			// empty/mismatched canonical rejects) lives in the unit-tested
+			// BookingCom::sourceUrlHotelMismatch().
+			$canonical_url = isset($source_info_from_source['canonical_url']) && is_string($source_info_from_source['canonical_url'])
+				? $source_info_from_source['canonical_url']
+				: '';
+			if (BookingCom::sourceUrlHotelMismatch($hotel_url, $canonical_url)) {
+				wp_send_json(['error' => 'api_error', 'message' => "We couldn't confirm this is the exact hotel from your link. Please paste the Booking.com hotel page URL again, or enter the numeric hotel ID."]);
+				return; // defense-in-depth: matches every other guard here even though wp_send_json exits
+			}
+
+			// Fetch hotel info and reviews via Relay API (GET request).
+			// SMASH-782 Phase 1: include `place_id` so the relay's reviews
+			// middleware can find the source row (see AliExpress handler for
+			// the middleware-ordering rationale).
 			$response = $relay->callProvider('booking', [
 				'hotel_id' => $hotel_id,
+				'place_id' => $hotel_id,
 				'sort_type' => 'SORT_MOST_RELEVANT',
 				'page_number' => 0,
 				'locale' => 'en-gb'
@@ -1381,9 +1505,16 @@ class SBR_New_Providers_Manager extends ServiceProvider
 				return;
 			}
 
-			// Use normalized data from proxy
+			// Prefer source-endpoint info (has richer fields like name/image)
+			// over reviews-endpoint info; fall back to either for any missing key.
 			$normalized_reviews = $response['reviews'];
-			$source_info = $response['info'];
+			$reviews_info = is_array($response['info']) ? $response['info'] : [];
+			// Drop only null / empty-string keys (so missing source fields fall
+			// back to reviews-info), but KEEP legitimate falsy values like 0 or
+			// false (e.g. a genuine 0 rating) instead of stripping them.
+			$source_info = array_filter($source_info_from_source, function ($v) {
+				return $v !== null && $v !== '';
+			}) + $reviews_info;
 			$review_count = count($normalized_reviews);
 
 			// Use hotel name from URL if available, otherwise use proxy info
@@ -1488,10 +1619,46 @@ class SBR_New_Providers_Manager extends ServiceProvider
 			// Use SBRelay to fetch normalized data from Relay API
 			$relay = new SBRelay();
 
-			// Fetch reviews from the product via Relay API
-			// Returns normalized data with 'reviews' and 'info' keys
+			// SMASH-782 Phase 1: call /sources/<provider> BEFORE /reviews/<provider>.
+			// The relay's reviews route is gated by the source-must-exist check
+			// (post-SMASH-1360 quota hardening). Calling reviews first returns
+			// `reviewsSourceNotCreated`. The source endpoint also creates the
+			// underlying source row server-side via sourceService->insert().
+			$source_response = $relay->callProvider('aliexpress', [
+				'itemId' => $item_id
+			], 'source', 'GET');
+
+			// Surface source-call errors immediately so the customer sees the
+			// real upstream cause instead of the downstream `reviewsSourceNotCreated`.
+			// Relay returns `{success: false, message, data: {id, apiMessage, ...}}`
+			// on upstream RapidAPI failure (e.g. invalid product ID, expired
+			// subscription, rate limit). When `callProvider()` unwraps a
+			// `success:true + data:{...}` envelope it returns the data subtree,
+			// so the error envelope reaches us unwrapped here.
+			if (isset($source_response['success']) && $source_response['success'] === false) {
+				// `SBRelay::call()` unwraps the data envelope on error so `apiMessage`
+				// is at the top level; keep the nested form as a backstop.
+				$upstream_msg = $source_response['apiMessage']
+					?? $source_response['data']['apiMessage']
+					?? $source_response['message']
+					?? 'Unable to fetch AliExpress product info from upstream.';
+				wp_send_json(['error' => 'api_error', 'message' => $upstream_msg]);
+				return;
+			}
+
+			$source_info = isset($source_response['info']) && is_array($source_response['info'])
+				? $source_response['info']
+				: [];
+
+			// Fetch reviews from the product via Relay API.
+			// SMASH-782 Phase 1: include `place_id` so the relay's reviews
+			// middleware (`LimitReviewsRequest::resolvePlaceId`) can find the
+			// source row that the source call just inserted. The
+			// `NormalizesRapidAPIParameters` trait only runs in the controller
+			// (after middleware), so middleware needs `place_id` explicitly.
 			$response = $relay->callProvider('aliexpress', [
 				'itemId' => $item_id,
+				'place_id' => $item_id,
 				'page' => 1,
 				'filter' => 'allReviews'
 			], 'reviews', 'GET');
@@ -1506,32 +1673,20 @@ class SBR_New_Providers_Manager extends ServiceProvider
 				return;
 			}
 
-			// Use normalized data from proxy
+			// Use normalized data from proxy. Reviews response also carries an
+			// `info` block; prefer the source-endpoint info when it has the
+			// richer fields (name, image) populated, fall back to reviews-info
+			// or defaults for any missing key.
 			$normalized_reviews = $response['reviews'];
-			$source_info = $response['info'];
+			$reviews_info = is_array($response['info']) ? $response['info'] : [];
+			// Keep legitimate falsy values (0, false); drop only null / empty string.
+			$source_info = array_filter($source_info, function ($v) {
+				return $v !== null && $v !== '';
+			}) + $reviews_info;
 			$review_count = count($normalized_reviews);
 
-			// Fetch product details to get name and image via SBRelay (source endpoint)
 			$product_name = $source_info['name'] ?? 'AliExpress Product ' . $item_id;
 			$product_image = $source_info['image'] ?? '';
-
-			try {
-				$details_response = $relay->callProvider('aliexpress', [
-					'itemId' => $item_id
-				], 'source', 'GET');
-
-				// Use source info if available (has better product details)
-				if (isset($details_response['info'])) {
-					if (!empty($details_response['info']['name'])) {
-						$product_name = $details_response['info']['name'];
-					}
-					if (!empty($details_response['info']['image'])) {
-						$product_image = $details_response['info']['image'];
-					}
-				}
-			} catch (\Exception $e) {
-				// Continue with default values if product details fetch fails
-			}
 
 			$source_data = [
 				'id' => $item_id,
@@ -1665,8 +1820,45 @@ class SBR_New_Providers_Manager extends ServiceProvider
 			// Build API parameters based on provider
 			$api_params = [$config['param_name'] => $source_id];
 
-			// Fetch reviews from API via SBRelay
-			// Returns normalized data with 'reviews' and 'info' keys
+			// SMASH-782: Booking's reviews endpoint needs sort/paging/locale to
+			// return results. The dedicated add_booking_source() handler (the path
+			// the Add-Source modal actually calls) sends these; mirror them here so
+			// the generic handler produces an identical call if it is ever used for
+			// Booking. airbnb/aliexpress are unaffected; the source endpoint ignores
+			// the extra keys.
+			if ($provider_name === 'booking') {
+				$api_params['sort_type']   = 'SORT_MOST_RELEVANT';
+				$api_params['page_number'] = 0;
+				$api_params['locale']      = 'en-gb';
+			}
+
+			// SMASH-782: call /source/<provider> BEFORE /reviews/<provider>, same as
+			// the provider-specific handlers (add_airbnb/booking/aliexpress_source).
+			// The relay's reviews route is gated by the source-must-exist check
+			// (post-SMASH-1360 quota hardening); calling reviews first returns
+			// `reviewsSourceNotCreated` / silent 0 reviews.
+			$source_response = $relay->callProvider($provider_name, $api_params, 'source', 'GET');
+			if (isset($source_response['success']) && $source_response['success'] === false) {
+				// SBRelay::call() unwraps the error envelope, so apiMessage is top-level.
+				$upstream_msg = $source_response['apiMessage']
+					?? $source_response['data']['apiMessage']
+					?? $source_response['message']
+					?? ('Unable to fetch ' . $config['friendly_name'] . ' source info from upstream.');
+				// wp_send_json() exits via wp_die() in production, but wp_die is
+				// mocked (non-exiting) under tests — return so execution stops in
+				// both, matching the reviews-error handler below.
+				wp_send_json(['error' => 'api_error', 'message' => $upstream_msg]);
+				return;
+			}
+			$source_info_from_source = isset($source_response['info']) && is_array($source_response['info'])
+				? $source_response['info']
+				: [];
+
+			// Fetch reviews from API via SBRelay. Include `place_id` so the relay's
+			// reviews middleware can find the source row (see the provider-specific
+			// handlers for the middleware-ordering rationale).
+			// Returns normalized data with 'reviews' and 'info' keys.
+			$api_params['place_id'] = $source_id;
 			$response = $relay->callProvider($provider_name, $api_params, 'reviews', 'GET');
 
 			// Validate response structure - proxy returns { reviews: [], info: {} }
@@ -1679,9 +1871,14 @@ class SBR_New_Providers_Manager extends ServiceProvider
 				return;
 			}
 
-			// Use normalized data from proxy
+			// Use normalized data from proxy. Prefer the richer source-endpoint
+			// info, falling back to reviews-endpoint info for any missing key;
+			// keep legitimate falsy values (0, false), drop only null / ''.
 			$normalized_reviews = $response['reviews'];
-			$source_info = $response['info'];
+			$reviews_info = is_array($response['info']) ? $response['info'] : [];
+			$source_info = array_filter($source_info_from_source, function ($v) {
+				return $v !== null && $v !== '';
+			}) + $reviews_info;
 			$review_count = count($normalized_reviews);
 
 			// Prepare source data for database
@@ -1831,5 +2028,739 @@ class SBR_New_Providers_Manager extends ServiceProvider
 				'message'  => $e->getMessage(),
 			]);
 		}
+	}
+
+	/**
+	 * Add single EDD download source
+	 *
+	 * @since 2.5.0
+	 * @requires Pro version
+	 */
+	public static function add_edd_source()
+	{
+		check_ajax_referer('sbr-admin', 'nonce');
+
+		// Pro version required for EDD
+		if (! self::require_pro_version('EDD')) {
+			return;
+		}
+
+		if (! sbr_current_user_can('manage_reviews_feed_options')) {
+			wp_send_json([ 'error' => 'api_error', 'message' => 'Unauthorized access' ]);
+			return;
+		}
+
+		// Strict gate (matches Util::get_providers UI tile). is_edd_active()
+		// is intentionally retained on the display side; see EDD::is_active_static.
+		if (! EDD::is_active_static()) {
+			wp_send_json([ 'error' => 'api_error', 'message' => 'EDD or EDD Reviews is not active' ]);
+			return;
+		}
+		$edd = new EDD();
+
+		// Get download ID from URL or direct ID
+		$download_url = isset($_POST['download_url']) ? sanitize_text_field(wp_unslash($_POST['download_url'])) : '';
+		$download_id  = isset($_POST['download_id']) ? absint($_POST['download_id']) : 0;
+
+		// Extract ID from URL if provided
+		if (! empty($download_url) && empty($download_id)) {
+			$download_id = EDD::extract_download_id($download_url);
+		}
+
+		if (! $download_id) {
+			wp_send_json([ 'error' => 'api_error', 'message' => 'Invalid download ID or URL' ]);
+			return;
+		}
+
+		// Validate download exists
+		$download = get_post($download_id);
+		if (! $download || $download->post_type !== 'download') {
+			wp_send_json([ 'error' => 'api_error', 'message' => 'Download not found' ]);
+			return;
+		}
+
+		// Check if source already exists
+		$existing_source = self::get_existing_source((string) $download_id, 'edd');
+		if ($existing_source) {
+			self::respond_with_existing_source($existing_source, 'EDD');
+			return;
+		}
+
+		// Get download info
+		$source_info = $edd->get_source_info($download);
+
+		// Fetch initial reviews
+		$reviews = $edd->fetch_reviews($download_id, 1, 20);
+		$normalized_reviews = $edd->normalize_reviews($reviews, $download);
+
+		// Get thumbnail
+		$image_id  = get_post_thumbnail_id($download_id);
+		$image_url = $image_id ? wp_get_attachment_url($image_id) : '';
+
+		$source_data = [
+			'id'           => (string) $download_id,
+			'provider'     => 'edd',
+			'name'         => $download->post_title,
+			'url'          => get_permalink($download_id),
+			'image'        => $image_url,
+			'rating'       => $source_info['rating'],
+			'review_count' => $source_info['review_count'],
+			'account_id'   => (string) $download_id,
+			'access_token' => '',
+			'info'         => wp_json_encode([
+				'id'           => $download_id,
+				'name'         => $download->post_title,
+				'url'          => get_permalink($download_id),
+				'image'        => $image_url,
+				'rating'       => $source_info['rating'],
+				'total_rating' => $source_info['review_count'],
+				'review_count' => $source_info['review_count'],
+				'provider'     => 'edd'
+			]),
+			'error'        => '',
+			'expires'      => gmdate('Y-m-d H:i:s', strtotime('+1 year')),
+			'last_updated' => current_time('mysql'),
+			'author'       => get_current_user_id()
+		];
+
+		// Save source
+		SBR_Sources::update_or_insert($source_data);
+
+		// Cache reviews
+		self::cache_reviews($normalized_reviews, 'edd', (string) $download_id);
+
+		// Schedule bulk update if needed
+		if ($source_info['review_count'] > 20) {
+			$bulk_update = new Bulk_EDD_Reviews_Update();
+			$bulk_update->schedule_task([
+				'download_id' => (string) $download_id
+			]);
+		}
+
+		wp_send_json([
+			'success'      => true,
+			'message'      => 'addedSource', // Must match frontend expectation in AddSourceModal.js
+			'source'       => $source_data,
+			'sourcesList'  => SBR_Sources::get_sources_list(),
+			'sourcesCount' => SBR_Sources::get_sources_count()
+		]);
+	}
+
+	/**
+	 * Add multi-download EDD source
+	 *
+	 * @since 2.5.0
+	 * @requires Pro version
+	 */
+	public static function add_edd_source_multi()
+	{
+		check_ajax_referer('sbr-admin', 'nonce');
+
+		// Pro version required
+		if (! self::require_pro_version('EDD')) {
+			return;
+		}
+
+		if (! sbr_current_user_can('manage_reviews_feed_options')) {
+			wp_send_json([ 'error' => 'api_error', 'message' => 'Unauthorized access' ]);
+			return;
+		}
+
+		// Strict gate (matches Util::get_providers UI tile). is_edd_active()
+		// is intentionally retained on the display side; see EDD::is_active_static.
+		if (! EDD::is_active_static()) {
+			wp_send_json([ 'error' => 'api_error', 'message' => 'EDD or EDD Reviews is not active' ]);
+			return;
+		}
+		$edd = new EDD();
+
+		// Maximum allowed items per selection type (prevent memory exhaustion)
+		$max_items = 100;
+
+		// Get download_ids, category_ids, and tag_ids (all optional but at least one required).
+		// phpcs:disable WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- array_map with absint sanitizes the values
+		$direct_download_ids = isset($_POST['download_ids']) && is_array($_POST['download_ids']) ? array_map('absint', $_POST['download_ids']) : [];
+		$category_ids        = isset($_POST['category_ids']) && is_array($_POST['category_ids']) ? array_map('absint', $_POST['category_ids']) : [];
+		$tag_ids             = isset($_POST['tag_ids']) && is_array($_POST['tag_ids']) ? array_map('absint', $_POST['tag_ids']) : [];
+		// phpcs:enable WordPress.Security.ValidatedSanitizedInput.InputNotSanitized
+
+		// Enforce maximum limits to prevent memory exhaustion attacks
+		if (count($direct_download_ids) > $max_items || count($category_ids) > $max_items || count($tag_ids) > $max_items) {
+			wp_send_json([ 'error' => 'api_error', 'message' => sprintf('Maximum %d items allowed per selection type', $max_items) ]);
+			return;
+		}
+
+		// Filter out zeros.
+		$direct_download_ids = array_filter($direct_download_ids);
+		$category_ids        = array_filter($category_ids);
+		$tag_ids             = array_filter($tag_ids);
+
+		// Validate at least one selection type is provided.
+		if (empty($direct_download_ids) && empty($category_ids) && empty($tag_ids)) {
+			wp_send_json([ 'error' => 'api_error', 'message' => 'At least one download, category, or tag must be selected' ]);
+			return;
+		}
+
+		// Validate source_name is provided
+		if (! isset($_POST['source_name']) || empty(trim(sanitize_text_field(wp_unslash($_POST['source_name']))))) {
+			wp_send_json([ 'error' => 'api_error', 'message' => 'Source name is required' ]);
+			return;
+		}
+
+		$source_name = sanitize_text_field(wp_unslash($_POST['source_name']));
+
+		// Resolve category and tag selections to download IDs
+		$category_download_ids = $edd->get_downloads_by_categories($category_ids);
+		$tag_download_ids      = $edd->get_downloads_by_tags($tag_ids);
+
+		// Merge and limit download IDs
+		$merge_result = self::merge_and_limit_download_ids($direct_download_ids, $category_download_ids, $tag_download_ids);
+		$download_ids = $merge_result['download_ids'];
+
+		if (empty($download_ids)) {
+			wp_send_json([ 'error' => 'api_error', 'message' => 'No downloads selected' ]);
+			return;
+		}
+
+		// Generate unique source ID
+		$source_id = 'edd_multi_' . wp_generate_uuid4();
+
+		// Build downloads info
+		$downloads_info      = [];
+		$total_review_count  = 0;
+		$weighted_rating_sum = 0;
+
+		foreach ($download_ids as $download_id) {
+			$download = get_post($download_id);
+			if (! $download || $download->post_type !== 'download') {
+				continue;
+			}
+
+			$stats = $edd->get_download_review_stats($download_id);
+			$review_count   = $stats['review_count'];
+			$average_rating = $stats['average_rating'];
+
+			$image_id  = get_post_thumbnail_id($download_id);
+			$image_url = $image_id ? wp_get_attachment_image_url($image_id, 'thumbnail') : '';
+
+			$downloads_info[] = [
+				'id'             => $download_id,
+				'name'           => $download->post_title,
+				'image'          => $image_url,
+				'url'            => get_permalink($download_id),
+				'review_count'   => $review_count,
+				'average_rating' => $average_rating
+			];
+
+			$total_review_count  += $review_count;
+			$weighted_rating_sum += $average_rating * $review_count;
+		}
+
+		// Calculate weighted average
+		$average_rating = $total_review_count > 0 ? round($weighted_rating_sum / $total_review_count, 1) : 0;
+
+		// Use first download's image as source image
+		$source_image = ! empty($downloads_info[0]['image']) ? $downloads_info[0]['image'] : '';
+
+		// Build categories info
+		$categories_info = [];
+		foreach ($category_ids as $cat_id) {
+			$term = get_term($cat_id, 'download_category');
+			if ($term && ! is_wp_error($term)) {
+				$categories_info[] = [
+					'id'             => $term->term_id,
+					'name'           => $term->name,
+					'slug'           => $term->slug,
+					'download_count' => $term->count,
+				];
+			}
+		}
+
+		// Build tags info
+		$tags_info = [];
+		foreach ($tag_ids as $tag_id_item) {
+			$term = get_term($tag_id_item, 'download_tag');
+			if ($term && ! is_wp_error($term)) {
+				$tags_info[] = [
+					'id'             => $term->term_id,
+					'name'           => $term->name,
+					'slug'           => $term->slug,
+					'download_count' => $term->count,
+				];
+			}
+		}
+
+		$source_data = [
+			'id'           => $source_id,
+			'provider'     => 'edd',
+			'name'         => $source_name,
+			'url'          => '',
+			'image'        => $source_image,
+			'rating'       => $average_rating,
+			'review_count' => $total_review_count,
+			'account_id'   => $source_id,
+			'access_token' => '',
+			'info'         => wp_json_encode([
+				'type'              => 'multi_download',
+				'source_name'       => $source_name,
+				'downloads'         => $downloads_info,
+				'download_ids'      => array_values($download_ids),
+				'direct_download_ids' => array_values($direct_download_ids),
+				'category_ids'      => array_values($category_ids),
+				'tag_ids'           => array_values($tag_ids),
+				'categories'        => $categories_info,
+				'tags'              => $tags_info,
+				'direct_downloads'  => array_values(array_filter($downloads_info, function ($d) use ($direct_download_ids) {
+					return in_array($d['id'], $direct_download_ids, true);
+				})),
+				'download_count'    => count($downloads_info),
+				'total_rating'      => $total_review_count,
+				'review_count'      => $total_review_count,
+				'average_rating'    => $average_rating,
+				'provider'          => 'edd'
+			]),
+			'error'        => '',
+			'expires'      => gmdate('Y-m-d H:i:s', strtotime('+1 year')),
+			'last_updated' => current_time('mysql'),
+			'author'       => get_current_user_id()
+		];
+
+		// Save source
+		SBR_Sources::update_or_insert($source_data);
+
+		// Fetch and cache initial reviews
+		$reviews = $edd->fetch_reviews_multi($download_ids, 20, 0);
+		$normalized_reviews = $edd->normalize_reviews_multi($reviews);
+
+		if (! empty($normalized_reviews)) {
+			self::cache_reviews($normalized_reviews, 'edd', $source_id);
+		}
+
+		// Schedule bulk update if needed
+		if ($total_review_count > 20) {
+			$bulk_update = new Bulk_EDD_Reviews_Update();
+			$bulk_update->schedule_task([
+				'source_id'    => $source_id,
+				'download_ids' => $download_ids,
+				'type'         => 'multi_download',
+			]);
+		}
+
+		wp_send_json([
+			'success'      => true,
+			'message'      => 'addedSource', // Must match frontend expectation in AddSourceModal.js
+			'source'       => $source_data,
+			'sourcesList'  => SBR_Sources::get_sources_list(),
+			'sourcesCount' => SBR_Sources::get_sources_count()
+		]);
+	}
+
+	/**
+	 * Update multi-download EDD source
+	 *
+	 * @since 2.5.0
+	 * @requires Pro version
+	 */
+	public static function update_edd_source_multi()
+	{
+		check_ajax_referer('sbr-admin', 'nonce');
+
+		if (! self::require_pro_version('EDD')) {
+			return;
+		}
+
+		if (! sbr_current_user_can('manage_reviews_feed_options')) {
+			wp_send_json([ 'error' => 'api_error', 'message' => 'Unauthorized access' ]);
+			return;
+		}
+
+		// Strict gate (matches Util::get_providers UI tile). is_edd_active()
+		// is intentionally retained on the display side; see EDD::is_active_static.
+		if (! EDD::is_active_static()) {
+			wp_send_json([ 'error' => 'api_error', 'message' => 'EDD or EDD Reviews is not active' ]);
+			return;
+		}
+		$edd = new EDD();
+
+		$source_id = isset($_POST['source_id']) ? sanitize_text_field(wp_unslash($_POST['source_id'])) : '';
+		if (empty($source_id)) {
+			wp_send_json([ 'error' => 'api_error', 'message' => 'Source ID is required' ]);
+			return;
+		}
+
+		// Get current source
+		$current_source = SBR_Sources::get_single_source_info([
+			'id'       => $source_id,
+			'provider' => 'edd'
+		]);
+
+		if (! $current_source) {
+			wp_send_json([ 'error' => 'api_error', 'message' => 'Source not found' ]);
+			return;
+		}
+
+		// Get old download IDs for comparison
+		$old_info = ! empty($current_source['info']) ? json_decode($current_source['info'], true) : [];
+		$old_download_ids = $old_info['download_ids'] ?? [];
+
+		// Maximum allowed items per selection type (prevent memory exhaustion)
+		$max_items = 100;
+
+		// Get new selection data (download_ids, category_ids, tag_ids - all optional but at least one required).
+		// phpcs:disable WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- array_map with absint sanitizes the values
+		$direct_download_ids = isset($_POST['download_ids']) && is_array($_POST['download_ids']) ? array_map('absint', $_POST['download_ids']) : [];
+		$category_ids        = isset($_POST['category_ids']) && is_array($_POST['category_ids']) ? array_map('absint', $_POST['category_ids']) : [];
+		$tag_ids             = isset($_POST['tag_ids']) && is_array($_POST['tag_ids']) ? array_map('absint', $_POST['tag_ids']) : [];
+		// phpcs:enable WordPress.Security.ValidatedSanitizedInput.InputNotSanitized
+
+		// Enforce maximum limits to prevent memory exhaustion attacks
+		if (count($direct_download_ids) > $max_items || count($category_ids) > $max_items || count($tag_ids) > $max_items) {
+			wp_send_json([ 'error' => 'api_error', 'message' => sprintf('Maximum %d items allowed per selection type', $max_items) ]);
+			return;
+		}
+
+		// Filter out zeros.
+		$direct_download_ids = array_filter($direct_download_ids);
+		$category_ids        = array_filter($category_ids);
+		$tag_ids             = array_filter($tag_ids);
+
+		// Validate at least one selection type is provided.
+		if (empty($direct_download_ids) && empty($category_ids) && empty($tag_ids)) {
+			wp_send_json([ 'error' => 'api_error', 'message' => 'At least one download, category, or tag must be selected' ]);
+			return;
+		}
+
+		$source_name = isset($_POST['source_name']) ? sanitize_text_field(wp_unslash($_POST['source_name'])) : ($old_info['source_name'] ?? __('EDD Downloads', 'reviews-feed'));
+
+		// Resolve to download IDs
+		$category_download_ids = $edd->get_downloads_by_categories($category_ids);
+		$tag_download_ids      = $edd->get_downloads_by_tags($tag_ids);
+
+		$merge_result = self::merge_and_limit_download_ids($direct_download_ids, $category_download_ids, $tag_download_ids);
+		$download_ids = $merge_result['download_ids'];
+
+		if (empty($download_ids)) {
+			wp_send_json([ 'error' => 'api_error', 'message' => 'No downloads selected' ]);
+			return;
+		}
+
+		// Build new downloads info
+		$downloads_info      = [];
+		$total_review_count  = 0;
+		$weighted_rating_sum = 0;
+
+		foreach ($download_ids as $download_id) {
+			$download = get_post($download_id);
+			if (! $download || $download->post_type !== 'download') {
+				continue;
+			}
+
+			$stats = $edd->get_download_review_stats($download_id);
+			$review_count   = $stats['review_count'];
+			$average_rating = $stats['average_rating'];
+
+			$image_id  = get_post_thumbnail_id($download_id);
+			$image_url = $image_id ? wp_get_attachment_image_url($image_id, 'thumbnail') : '';
+
+			$downloads_info[] = [
+				'id'             => $download_id,
+				'name'           => $download->post_title,
+				'image'          => $image_url,
+				'url'            => get_permalink($download_id),
+				'review_count'   => $review_count,
+				'average_rating' => $average_rating
+			];
+
+			$total_review_count  += $review_count;
+			$weighted_rating_sum += $average_rating * $review_count;
+		}
+
+		$average_rating = $total_review_count > 0 ? round($weighted_rating_sum / $total_review_count, 1) : 0;
+		$source_image = ! empty($downloads_info[0]['image']) ? $downloads_info[0]['image'] : '';
+
+		// Build categories/tags info
+		$categories_info = [];
+		foreach ($category_ids as $cat_id) {
+			$term = get_term($cat_id, 'download_category');
+			if ($term && ! is_wp_error($term)) {
+				$categories_info[] = [
+					'id'             => $term->term_id,
+					'name'           => $term->name,
+					'slug'           => $term->slug,
+					'download_count' => $term->count,
+				];
+			}
+		}
+
+		$tags_info = [];
+		foreach ($tag_ids as $tag_id_item) {
+			$term = get_term($tag_id_item, 'download_tag');
+			if ($term && ! is_wp_error($term)) {
+				$tags_info[] = [
+					'id'             => $term->term_id,
+					'name'           => $term->name,
+					'slug'           => $term->slug,
+					'download_count' => $term->count,
+				];
+			}
+		}
+
+		$source_data = [
+			'id'           => $source_id,
+			'provider'     => 'edd',
+			'name'         => $source_name,
+			'url'          => '',
+			'image'        => $source_image,
+			'rating'       => $average_rating,
+			'review_count' => $total_review_count,
+			'account_id'   => $source_id,
+			'access_token' => '',
+			'info'         => wp_json_encode([
+				'type'              => 'multi_download',
+				'source_name'       => $source_name,
+				'downloads'         => $downloads_info,
+				'download_ids'      => array_values($download_ids),
+				'direct_download_ids' => array_values($direct_download_ids),
+				'category_ids'      => array_values($category_ids),
+				'tag_ids'           => array_values($tag_ids),
+				'categories'        => $categories_info,
+				'tags'              => $tags_info,
+				'direct_downloads'  => array_values(array_filter($downloads_info, function ($d) use ($direct_download_ids) {
+					return in_array($d['id'], $direct_download_ids, true);
+				})),
+				'download_count'    => count($downloads_info),
+				'total_rating'      => $total_review_count,
+				'review_count'      => $total_review_count,
+				'average_rating'    => $average_rating,
+				'provider'          => 'edd'
+			]),
+			'error'        => '',
+			'expires'      => gmdate('Y-m-d H:i:s', strtotime('+1 year')),
+			'last_updated' => current_time('mysql'),
+			'author'       => get_current_user_id()
+		];
+
+		// Update source
+		SBR_Sources::update_or_insert($source_data);
+
+		// Find downloads that were removed
+		$removed_download_ids = array_diff($old_download_ids, $download_ids);
+
+		// Delete reviews for removed downloads
+		if (! empty($removed_download_ids)) {
+			global $wpdb;
+			$posts_table = $wpdb->prefix . SBR_POSTS_TABLE;
+
+			$placeholders = implode(',', array_fill(0, count($removed_download_ids), '%d'));
+			// phpcs:disable WordPress.DB.PreparedSQL.InterpolatedNotPrepared, WordPress.DB.PreparedSQLPlaceholders.UnfinishedPrepare
+			$reviews_to_delete = $wpdb->get_col(
+				$wpdb->prepare(
+					"SELECT p.id FROM {$posts_table} p
+					 INNER JOIN {$wpdb->comments} c ON p.post_id = c.comment_ID
+					 WHERE p.provider_id = %s
+					 AND p.provider = 'edd'
+					 AND c.comment_post_ID IN ($placeholders)",
+					...array_merge([ $source_id ], array_values($removed_download_ids))
+				)
+			);
+			// phpcs:enable WordPress.DB.PreparedSQL.InterpolatedNotPrepared, WordPress.DB.PreparedSQLPlaceholders.UnfinishedPrepare
+
+			if (! empty($reviews_to_delete)) {
+				$delete_placeholders = implode(',', array_fill(0, count($reviews_to_delete), '%d'));
+				// phpcs:disable WordPress.DB.PreparedSQL.InterpolatedNotPrepared, WordPress.DB.PreparedSQLPlaceholders.UnfinishedPrepare
+				$wpdb->query(
+					$wpdb->prepare(
+						"DELETE FROM {$posts_table} WHERE id IN ($delete_placeholders)",
+						...$reviews_to_delete
+					)
+				);
+				// phpcs:enable WordPress.DB.PreparedSQL.InterpolatedNotPrepared, WordPress.DB.PreparedSQLPlaceholders.UnfinishedPrepare
+
+				// Clear feed cache after deleting reviews to prevent stale data
+				SBR_Feed_Saver_Manager::clear_plugin_cache();
+			}
+		}
+
+		// Find new downloads
+		$new_download_ids = array_diff($download_ids, $old_download_ids);
+
+		// Fetch and cache reviews for new downloads
+		if (! empty($new_download_ids)) {
+			$reviews = $edd->fetch_reviews_multi($new_download_ids, 20, 0);
+			$normalized_reviews = $edd->normalize_reviews_multi($reviews);
+
+			if (! empty($normalized_reviews)) {
+				self::cache_reviews($normalized_reviews, 'edd', $source_id);
+			}
+
+			// Schedule bulk update if needed
+			if ($total_review_count > 20) {
+				$accounts_list = get_option('sbr_bulk_edd', []);
+				if (isset($accounts_list[ $source_id ])) {
+					$accounts_list[ $source_id ]['is_done']      = false;
+					$accounts_list[ $source_id ]['offset']       = 20;
+					$accounts_list[ $source_id ]['download_ids'] = $download_ids;
+					update_option('sbr_bulk_edd', $accounts_list);
+				}
+
+				$bulk_update = new Bulk_EDD_Reviews_Update();
+				$bulk_update->schedule_task([
+					'source_id'    => $source_id,
+					'download_ids' => $download_ids,
+					'type'         => 'multi_download',
+				]);
+			}
+		}
+
+		wp_send_json([
+			'success'      => true,
+			'message'      => 'updatedSource',
+			'source'       => $source_data,
+			'sourcesList'  => SBR_Sources::get_sources_list(),
+			'sourcesCount' => SBR_Sources::get_sources_count()
+		]);
+	}
+
+	/**
+	 * Get EDD downloads for selector
+	 *
+	 * @since 2.5.0
+	 * @requires Pro version
+	 */
+	public static function get_edd_downloads()
+	{
+		check_ajax_referer('sbr-admin', 'nonce');
+
+		if (! self::require_pro_version('EDD')) {
+			return;
+		}
+
+		if (! sbr_current_user_can('manage_reviews_feed_options')) {
+			wp_send_json([ 'error' => 'api_error', 'message' => 'Unauthorized access' ]);
+			return;
+		}
+
+		// Strict gate (matches Util::get_providers UI tile). is_edd_active()
+		// is intentionally retained on the display side; see EDD::is_active_static.
+		if (! EDD::is_active_static()) {
+			wp_send_json([ 'error' => 'api_error', 'message' => 'EDD or EDD Reviews is not active' ]);
+			return;
+		}
+		$edd = new EDD();
+
+		$search    = isset($_POST['search']) ? sanitize_text_field(wp_unslash($_POST['search'])) : '';
+		$downloads = $edd->get_sb_edd_downloads($search);
+
+		wp_send_json_success([
+			'downloads' => $downloads,
+		]);
+	}
+
+	/**
+	 * Get EDD categories
+	 *
+	 * @since 2.5.0
+	 * @requires Pro version
+	 */
+	public static function get_edd_categories()
+	{
+		check_ajax_referer('sbr-admin', 'nonce');
+
+		if (! self::require_pro_version('EDD')) {
+			return;
+		}
+
+		if (! sbr_current_user_can('manage_reviews_feed_options')) {
+			wp_send_json([ 'error' => 'api_error', 'message' => 'Unauthorized access' ]);
+			return;
+		}
+
+		// Strict gate (matches Util::get_providers UI tile). is_edd_active()
+		// is intentionally retained on the display side; see EDD::is_active_static.
+		if (! EDD::is_active_static()) {
+			wp_send_json([ 'error' => 'api_error', 'message' => 'EDD or EDD Reviews is not active' ]);
+			return;
+		}
+		$edd = new EDD();
+
+		$categories = $edd->get_download_categories();
+
+		wp_send_json_success([
+			'categories' => $categories
+		]);
+	}
+
+	/**
+	 * Get EDD tags
+	 *
+	 * @since 2.5.0
+	 * @requires Pro version
+	 */
+	public static function get_edd_tags()
+	{
+		check_ajax_referer('sbr-admin', 'nonce');
+
+		if (! self::require_pro_version('EDD')) {
+			return;
+		}
+
+		if (! sbr_current_user_can('manage_reviews_feed_options')) {
+			wp_send_json([ 'error' => 'api_error', 'message' => 'Unauthorized access' ]);
+			return;
+		}
+
+		// Strict gate (matches Util::get_providers UI tile). is_edd_active()
+		// is intentionally retained on the display side; see EDD::is_active_static.
+		if (! EDD::is_active_static()) {
+			wp_send_json([ 'error' => 'api_error', 'message' => 'EDD or EDD Reviews is not active' ]);
+			return;
+		}
+		$edd = new EDD();
+
+		$tags = $edd->get_download_tags();
+
+		wp_send_json_success([
+			'tags' => $tags
+		]);
+	}
+
+	/**
+	 * Merge and limit download IDs
+	 *
+	 * @since 2.5.0
+	 * @param array $direct_download_ids   Downloads selected directly
+	 * @param array $category_download_ids Downloads from categories
+	 * @param array $tag_download_ids      Downloads from tags
+	 * @return array Array with download_ids, truncated flag, and total count
+	 */
+	private static function merge_and_limit_download_ids($direct_download_ids, $category_download_ids, $tag_download_ids)
+	{
+		$download_ids = array_unique(array_merge(
+			$direct_download_ids,
+			$category_download_ids,
+			$tag_download_ids
+		));
+
+		$total_count = count($download_ids);
+
+		/**
+		 * Filter the maximum number of downloads allowed in a multi-download EDD source.
+		 *
+		 * @since 2.5.0
+		 * @param int $max_downloads Maximum downloads allowed. Default 500.
+		 */
+		$max_downloads = apply_filters('sbr_edd_max_downloads', 500);
+
+		$truncated = $total_count > $max_downloads;
+
+		if ($truncated) {
+			$download_ids = array_slice($download_ids, 0, $max_downloads);
+		}
+
+		return [
+			'download_ids' => $download_ids,
+			'truncated'    => $truncated,
+			'total'        => $total_count,
+		];
 	}
 }
